@@ -142,7 +142,6 @@ class DatabaseManager:
         for row in rows:
             tid, paid_month = row
             if paid_month and paid_month != "":
-                # paid_month is like "YYYY-MM" -> next due = paid_month + 1 month
                 try:
                     y, m = map(int, paid_month.split("-"))
                     if m == 12:
@@ -184,24 +183,23 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def add_task(self, title, description, due_day, start_days_before, alarm_time, recurrence_interval):
-        now = datetime.datetime.now()
-        current_due = now.strftime("%Y-%m")
+    def add_task(self, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
+        # due_month is a string like "YYYY-MM"
         self.cursor.execute(
             """INSERT INTO tasks 
                (title, description, due_day, start_days_before, alarm_time, recurrence_interval, current_due_month)
                VALUES (?,?,?,?,?,?,?)""",
-            (title, description, due_day, start_days_before, alarm_time, recurrence_interval, current_due)
+            (title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month)
         )
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def update_task(self, task_id, title, description, due_day, start_days_before, alarm_time, recurrence_interval):
+    def update_task(self, task_id, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
         self.cursor.execute("""
             UPDATE tasks 
-            SET title=?, description=?, due_day=?, start_days_before=?, alarm_time=?, recurrence_interval=?
+            SET title=?, description=?, due_day=?, start_days_before=?, alarm_time=?, recurrence_interval=?, current_due_month=?
             WHERE id=?
-        """, (title, description, due_day, start_days_before, alarm_time, recurrence_interval, task_id))
+        """, (title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month, task_id))
         self.conn.commit()
 
     def delete_task(self, task_id):
@@ -218,41 +216,46 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def mark_paid(self, task_id, year_month):
-        # year_month is the month for which it is being paid (should equal current_due_month)
+        # year_month is the month being paid (should equal current_due_month)
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # Advance current_due_month by recurrence_interval
-        self.cursor.execute("SELECT current_due_month, recurrence_interval FROM tasks WHERE id=?", (task_id,))
+        self.cursor.execute("SELECT recurrence_interval, current_due_month FROM tasks WHERE id=?", (task_id,))
         row = self.cursor.fetchone()
         if not row:
             return
-        due_month_str, interval = row
-        try:
-            y, m = map(int, due_month_str.split("-"))
-            # Add interval months
-            for _ in range(interval):
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
-            new_due = f"{y:04d}-{m:02d}"
-        except:
-            # fallback: current month + interval
-            now = datetime.datetime.now()
-            y, m = now.year, now.month
-            for _ in range(interval):
-                m += 1
-                if m > 12:
-                    m = 1
-                    y += 1
-            new_due = f"{y:04d}-{m:02d}"
-        self.cursor.execute(
-            "UPDATE tasks SET current_due_month=?, snooze_until=NULL WHERE id=?",
-            (new_due, task_id)
-        )
-        # Store payment in history (using the month that was just paid)
+        interval, due_month_str = row
+        
+        # Store payment in history
         self.cursor.execute(
             "INSERT INTO paid_history (task_id, year_month, paid_timestamp) VALUES (?,?,?)",
             (task_id, due_month_str, now_str)
+        )
+
+        if interval == 0:
+            # ONCE: set to a far-future date so it never triggers again
+            new_due = "9999-12"
+        else:
+            # Recurring: advance by interval
+            try:
+                y, m = map(int, due_month_str.split("-"))
+                for _ in range(interval):
+                    m += 1
+                    if m > 12:
+                        m = 1
+                        y += 1
+                new_due = f"{y:04d}-{m:02d}"
+            except:
+                now = datetime.datetime.now()
+                y, m = now.year, now.month
+                for _ in range(interval):
+                    m += 1
+                    if m > 12:
+                        m = 1
+                        y += 1
+                new_due = f"{y:04d}-{m:02d}"
+
+        self.cursor.execute(
+            "UPDATE tasks SET current_due_month=?, snooze_until=NULL WHERE id=?",
+            (new_due, task_id)
         )
         self.conn.commit()
 
@@ -390,8 +393,7 @@ class AlarmPopup(QDialog):
             self.close_ok()
 
     def handle_paid(self, task_id):
-        # Get current due month for history
-        self.parent_app.db.mark_paid(task_id, None)  # mark_paid will compute new due
+        self.parent_app.db.mark_paid(task_id, None)
         self.parent_app.alarm_active.discard(task_id)
         self.remove_task(task_id)
 
@@ -449,12 +451,11 @@ class AlarmChecker(QObject):
         triggered = []
         for t in tasks:
             tid, _, _, due_day, _, snooze, start_before, alarm_time, interval, current_due = t
-            # If current_due is None (should not happen), skip
-            if not current_due:
+            # Skip if no due month or archived (9999-12)
+            if not current_due or current_due == "9999-12":
                 continue
             # Check if task is due this month or overdue
             if current_ym < current_due:
-                # Not yet due
                 continue
             # Check snooze
             expired_snooze = False
@@ -468,7 +469,6 @@ class AlarmChecker(QObject):
                 except:
                     pass
             if not expired_snooze:
-                # Normal alarm: check alarm time
                 try:
                     ah, am = map(int, alarm_time.split(":"))
                 except:
@@ -508,18 +508,44 @@ class EditTaskDialog(QDialog):
         self.start_spin.setValue(task_data[6])
         self.time_edit = QTimeEdit()
         self.time_edit.setTime(QTime.fromString(task_data[7], "HH:mm"))
-        self.recur_combo = QComboBox()
-        self.recur_combo.addItems(["1 month", "2 months", "3 months", "6 months", "12 months"])
-        # map text to interval
+        
+        # Recurrence: map interval to index
         interval = task_data[8] if len(task_data) > 8 else 1
-        index_map = {1:0, 2:1, 3:2, 6:3, 12:4}
-        self.recur_combo.setCurrentIndex(index_map.get(interval, 0))
+        interval_options = [0, 1, 2, 3, 6, 12]  # 0 = Once
+        self.recur_combo = QComboBox()
+        self.recur_combo.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
+        if interval in interval_options:
+            self.recur_combo.setCurrentIndex(interval_options.index(interval))
+        else:
+            self.recur_combo.setCurrentIndex(1)  # fallback to 1 month
+
+        # Month / Year picker for starting due month
+        current_due = task_data[9] if len(task_data) > 9 else datetime.datetime.now().strftime("%Y-%m")
+        try:
+            y, m = map(int, current_due.split("-"))
+        except:
+            y, m = datetime.datetime.now().year, datetime.datetime.now().month
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2024, 2035)
+        self.year_spin.setValue(y)
+        self.month_combo = QComboBox()
+        self.month_combo.addItems([f"{i:02d}" for i in range(1, 13)])
+        self.month_combo.setCurrentIndex(m - 1)
+
         layout.addRow("Title:", self.title_edit)
         layout.addRow("Description:", self.desc_edit)
         layout.addRow("Due Day:", self.due_spin)
         layout.addRow("Start days before:", self.start_spin)
         layout.addRow("Alarm Time:", self.time_edit)
         layout.addRow("Recurrence:", self.recur_combo)
+        
+        month_layout = QHBoxLayout()
+        month_layout.addWidget(QLabel("Year:"))
+        month_layout.addWidget(self.year_spin)
+        month_layout.addWidget(QLabel("Month:"))
+        month_layout.addWidget(self.month_combo)
+        layout.addRow("Start Reminder In:", month_layout)
+
         btn_box = QHBoxLayout()
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.accept)
@@ -530,7 +556,9 @@ class EditTaskDialog(QDialog):
         layout.addRow(btn_box)
 
     def get_data(self):
-        interval = [1,2,3,6,12][self.recur_combo.currentIndex()]
+        interval_list = [0, 1, 2, 3, 6, 12]
+        interval = interval_list[self.recur_combo.currentIndex()]
+        due_month = f"{self.year_spin.value():04d}-{int(self.month_combo.currentText()):02d}"
         return (
             self.task_id,
             self.title_edit.text().strip(),
@@ -538,7 +566,8 @@ class EditTaskDialog(QDialog):
             self.due_spin.value(),
             self.start_spin.value(),
             self.time_edit.time().toString("HH:mm"),
-            interval
+            interval,
+            due_month
         )
 
 # ===================== MAIN WINDOW =====================
@@ -645,15 +674,18 @@ class MyReminderApp(QMainWindow):
             tid, title, desc, due_day, paid_month, snooze, start_before, alarm_time, interval, current_due = t
             w = QWidget()
             h = QHBoxLayout(w)
-            # Show due info
             title_lbl = QLabel(f"{title} (Due: {due_day}, Alarm: {alarm_time})")
             title_lbl.setWordWrap(True)
             status = QLabel()
-            if current_due and current_due > current_ym:
+            
+            # Check if archived (permanently done)
+            if current_due == "9999-12":
+                status.setText("✅ Done")
+                status.setStyleSheet("color: #88ff88;")
+            elif current_due and current_due > current_ym:
                 status.setText("✔ Paid")
                 status.setStyleSheet("color: #88ff88;")
             else:
-                # Overdue or due
                 if current_due and current_due < current_ym:
                     status.setText("⚠ Overdue")
                     status.setStyleSheet("color: #ff4444;")
@@ -701,7 +733,7 @@ class MyReminderApp(QMainWindow):
         self._edit_task(tid)
 
     def _mark_paid(self, tid):
-        self.db.mark_paid(tid, None)  # None for year_month (will be determined from current_due)
+        self.db.mark_paid(tid, None)
         self.refresh_dashboard()
 
     def _edit_task(self, tid):
@@ -712,8 +744,8 @@ class MyReminderApp(QMainWindow):
         dlg = EditTaskDialog(task, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
-            # data: (id, title, desc, due_day, start_before, alarm_time, interval)
-            self.db.update_task(data[0], data[1], data[2], data[3], data[4], data[5], data[6])
+            # data: (id, title, desc, due_day, start_before, alarm_time, interval, due_month)
+            self.db.update_task(data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7])
             self.refresh_dashboard()
 
     def _delete_task(self, tid):
@@ -750,14 +782,34 @@ class MyReminderApp(QMainWindow):
         self.inp_start.setValue(12)
         self.inp_time = QTimeEdit()
         self.inp_time.setTime(QTime(9,0))
+        
+        # Recurrence dropdown
         self.inp_recur = QComboBox()
-        self.inp_recur.addItems(["1 month", "2 months", "3 months", "6 months", "12 months"])
+        self.inp_recur.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
+        
+        # Month / Year picker
+        now = datetime.datetime.now()
+        self.inp_year = QSpinBox()
+        self.inp_year.setRange(2024, 2035)
+        self.inp_year.setValue(now.year)
+        self.inp_month = QComboBox()
+        self.inp_month.addItems([f"{i:02d}" for i in range(1, 13)])
+        self.inp_month.setCurrentIndex(now.month - 1)
+        
         form.addRow("Title:", self.inp_title)
         form.addRow("Description:", self.inp_desc)
-        form.addRow("Due Date (day):", self.inp_due)
+        form.addRow("Due Day:", self.inp_due)
         form.addRow("Start days before:", self.inp_start)
         form.addRow("Alarm time:", self.inp_time)
         form.addRow("Recurrence:", self.inp_recur)
+        
+        month_layout = QHBoxLayout()
+        month_layout.addWidget(QLabel("Year:"))
+        month_layout.addWidget(self.inp_year)
+        month_layout.addWidget(QLabel("Month:"))
+        month_layout.addWidget(self.inp_month)
+        form.addRow("Start Reminder In:", month_layout)
+
         btn = QPushButton("Add Task")
         btn.clicked.connect(self._add_task)
         layout.addLayout(form)
@@ -770,14 +822,17 @@ class MyReminderApp(QMainWindow):
         if not title:
             QMessageBox.warning(self, "Error", "Title required!")
             return
-        interval = [1,2,3,6,12][self.inp_recur.currentIndex()]
+        interval_list = [0, 1, 2, 3, 6, 12]
+        interval = interval_list[self.inp_recur.currentIndex()]
+        due_month = f"{self.inp_year.value():04d}-{int(self.inp_month.currentText()):02d}"
         self.db.add_task(
             title,
             self.inp_desc.toPlainText().strip(),
             self.inp_due.value(),
             self.inp_start.value(),
             self.inp_time.time().toString("HH:mm"),
-            interval
+            interval,
+            due_month
         )
         QMessageBox.information(self, "Success", "Task added!")
         self.inp_title.clear()
