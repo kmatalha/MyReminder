@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+my_reminder.db
+dist/
+build/
+*.spec
+venv/
+env/
+myenv/
+.vscode/
+.idea/
