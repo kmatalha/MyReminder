@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
     QSpinBox, QLineEdit, QTextEdit, QMessageBox, QDialog, QSystemTrayIcon,
-    QMenu, QFileDialog, QCheckBox, QTimeEdit, QGroupBox, QScrollArea, QComboBox
+    QMenu, QFileDialog, QCheckBox, QTimeEdit, QGroupBox, QScrollArea, QComboBox,
+    QFrame, QGridLayout, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QTimer, QTime, pyqtSignal, QObject, QSharedMemory
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
+from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPalette
 import winsound
 
 # ===================== SINGLE INSTANCE CHECK =====================
@@ -40,7 +41,7 @@ def create_app_icon():
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor("#0d7377"))
+    painter.setBrush(QColor("#00bcd4"))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawEllipse(4, 4, 56, 56)
     painter.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
@@ -220,12 +221,10 @@ class DatabaseManager:
         if not row:
             return
         interval, due_month_str = row
-        
         self.cursor.execute(
             "INSERT INTO paid_history (task_id, year_month, paid_timestamp) VALUES (?,?,?)",
             (task_id, due_month_str, now_str)
         )
-
         if interval == 0:
             new_due = "9999-12"
         else:
@@ -246,7 +245,6 @@ class DatabaseManager:
                         m = 1
                         y += 1
                 new_due = f"{y:04d}-{m:02d}"
-
         self.cursor.execute(
             "UPDATE tasks SET current_due_month=?, snooze_until=NULL WHERE id=?",
             (new_due, task_id)
@@ -328,7 +326,7 @@ def stop_alarm_sound():
     except:
         pass
 
-# ===================== ALARM POPUP =====================
+# ===================== ALARM POPUP (UPGRADED UI) =====================
 class AlarmPopup(QDialog):
     def __init__(self, tasks, parent=None):
         super().__init__(parent)
@@ -337,50 +335,110 @@ class AlarmPopup(QDialog):
         self.parent_app = parent
         self.setWindowTitle("⏰ Reminder")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Dialog)
+        self.setMinimumWidth(600)
         self.setStyleSheet("""
-            QDialog { background-color: #2b2b2b; border: 2px solid #ff5555; border-radius: 12px; }
-            QLabel { color: white; }
-            QPushButton { background-color: #444; color: white; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #555; }
+            QDialog {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                            stop:0 #2b2b2b, stop:1 #1e1e1e);
+                border: 2px solid #ff5555;
+                border-radius: 16px;
+            }
+            QLabel { color: #eee; }
+            QGroupBox {
+                border: 1px solid #444;
+                border-radius: 12px;
+                margin-top: 12px;
+                padding: 16px;
+                background: #252525;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+                color: #00bcd4;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton {
+                background: #3a3a3a;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 18px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover { background: #4a4a4a; }
+            QPushButton:pressed { background: #2a2a2a; }
+            QPushButton#paidBtn { background: #2e7d32; }
+            QPushButton#paidBtn:hover { background: #388e3c; }
+            QPushButton#snoozeBtn { background: #b26a00; }
+            QPushButton#snoozeBtn:hover { background: #cc7a00; }
+            QPushButton#dismissBtn { background: #7f0000; }
+            QPushButton#dismissBtn:hover { background: #990000; }
         """)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b style='color:#ffaa00;'>🔔 Reminders</b>"))
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        header = QLabel("<b style='color:#ffb300; font-size:18px;'>🔔 Reminders</b>")
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         content = QWidget()
         self.content_layout = QVBoxLayout(content)
+        self.content_layout.setSpacing(12)
+
         for task in tasks:
             tid, title, *_ = task
             frame = QGroupBox(f"📌 {title}")
-            frame.setStyleSheet("QGroupBox { color: #00bcd4; font-weight: bold; }")
+            frame.setObjectName("taskFrame")
+            inner = QVBoxLayout(frame)
+            status_lbl = QLabel("🔔 Due now")
+            status_lbl.setStyleSheet("color: #ffb300; font-weight: bold;")
+            inner.addWidget(status_lbl)
+
             btn_layout = QHBoxLayout()
             btn_paid = QPushButton("✔ Paid")
+            btn_paid.setObjectName("paidBtn")
             btn_snooze_today = QPushButton("🔕 Today")
             btn_snooze = QPushButton("⏱ Snooze (5m)")
+            btn_snooze.setObjectName("snoozeBtn")
             btn_dismiss = QPushButton("❌ Dismiss")
+            btn_dismiss.setObjectName("dismissBtn")
+
             btn_paid.clicked.connect(lambda checked, t=tid: self.handle_paid(t))
             btn_snooze_today.clicked.connect(lambda checked, t=tid: self.handle_snooze_today(t))
             btn_snooze.clicked.connect(lambda checked, t=tid: self.handle_snooze(t))
             btn_dismiss.clicked.connect(lambda checked, t=tid: self.handle_dismiss(t))
+
             btn_layout.addWidget(btn_paid)
             btn_layout.addWidget(btn_snooze_today)
             btn_layout.addWidget(btn_snooze)
             btn_layout.addWidget(btn_dismiss)
-            frame.setLayout(btn_layout)
+            inner.addLayout(btn_layout)
             self.content_layout.addWidget(frame)
-            self.task_frames[tid] = frame
+            self.task_frames[tid] = (frame, status_lbl)
+
         scroll.setWidget(content)
         layout.addWidget(scroll)
+
         btn_dismiss_all = QPushButton("🔇 Dismiss All")
-        btn_dismiss_all.setStyleSheet("background-color: #aa3333;")
+        btn_dismiss_all.setStyleSheet("""
+            QPushButton { background: #7f0000; padding: 12px; font-weight: bold; }
+            QPushButton:hover { background: #990000; }
+        """)
         btn_dismiss_all.clicked.connect(self.handle_dismiss_all)
         layout.addWidget(btn_dismiss_all)
+
         self.adjustSize()
-        self.setMinimumWidth(500)
 
     def remove_task(self, task_id):
-        frame = self.task_frames.pop(task_id, None)
-        if frame:
+        if task_id in self.task_frames:
+            frame, _ = self.task_frames.pop(task_id)
             self.content_layout.removeWidget(frame)
             frame.deleteLater()
         if not self.task_frames:
@@ -483,9 +541,25 @@ class EditTaskDialog(QDialog):
     def __init__(self, task_data, parent=None):
         super().__init__(parent)
         self.task_id = task_data[0]
-        self.setWindowTitle("Edit Task")
-        self.setStyleSheet("background-color: #2b2b2b; color: white;")
+        self.setWindowTitle("✏️ Edit Task")
+        self.setMinimumWidth(500)
+        self.setStyleSheet("""
+            QDialog { background: #1e1e1e; }
+            QLabel { color: #ccc; }
+            QLineEdit, QTextEdit, QSpinBox, QComboBox, QTimeEdit {
+                background: #2b2b2b;
+                border: 1px solid #444;
+                border-radius: 8px;
+                padding: 8px;
+                color: #eee;
+            }
+            QPushButton { background: #00bcd4; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-weight: bold; }
+            QPushButton:hover { background: #00acc1; }
+        """)
         layout = QFormLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
         self.title_edit = QLineEdit(task_data[1])
         self.desc_edit = QTextEdit()
         self.desc_edit.setMaximumHeight(80)
@@ -498,7 +572,7 @@ class EditTaskDialog(QDialog):
         self.start_spin.setValue(task_data[6])
         self.time_edit = QTimeEdit()
         self.time_edit.setTime(QTime.fromString(task_data[7], "HH:mm"))
-        
+
         interval = task_data[8] if len(task_data) > 8 else 1
         interval_options = [0, 1, 2, 3, 6, 12]
         self.recur_combo = QComboBox()
@@ -526,7 +600,7 @@ class EditTaskDialog(QDialog):
         layout.addRow("Start days before:", self.start_spin)
         layout.addRow("Alarm Time:", self.time_edit)
         layout.addRow("Recurrence:", self.recur_combo)
-        
+
         month_layout = QHBoxLayout()
         month_layout.addWidget(QLabel("Year:"))
         month_layout.addWidget(self.year_spin)
@@ -535,7 +609,7 @@ class EditTaskDialog(QDialog):
         layout.addRow("Start Reminder In:", month_layout)
 
         btn_box = QHBoxLayout()
-        btn_save = QPushButton("Save")
+        btn_save = QPushButton("💾 Save")
         btn_save.clicked.connect(self.accept)
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
@@ -558,44 +632,62 @@ class EditTaskDialog(QDialog):
             due_month
         )
 
-# ===================== MAIN WINDOW =====================
+# ===================== MAIN WINDOW (UPGRADED UI) =====================
 class MyReminderApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.db = DatabaseManager()
         self.setWindowTitle("My Reminder")
-        self.resize(900, 650)
+        self.resize(1100, 750)
         self.setWindowIcon(create_app_icon())
-        self.setStyleSheet(self._style())
+        self.setStyleSheet(self._global_style())
         self.alarm_active = set()
         self.alarm_popup = None
 
+        # Tray
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(create_app_icon())
         tray_menu = QMenu()
-        tray_menu.addAction("Show", self.show_window)
-        tray_menu.addAction("Exit", self.quit_app)
+        tray_menu.addAction("📊 Show", self.show_window)
+        tray_menu.addAction("🚪 Exit", self.quit_app)
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self.tray_activated)
         self.tray_icon.show()
         if self.db.get_setting("auto_start") == "1":
             enable_startup()
 
+        # Main layout
         central = QWidget()
+        central.setObjectName("mainWindow")
         main_layout = QHBoxLayout(central)
-        main_layout.setContentsMargins(0,0,0,0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Sidebar
         sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(200)
         sb_layout = QVBoxLayout(sidebar)
-        sb_layout.addWidget(QLabel("My Reminder"))
-        self.btn_dash = QPushButton("📊 Dashboard")
-        self.btn_hist = QPushButton("📅 My Reminders")
-        self.btn_add = QPushButton("➕ Add Task")
-        self.btn_sett = QPushButton("⚙ Settings")
-        for btn in (self.btn_dash, self.btn_hist, self.btn_add, self.btn_sett):
-            btn.setCheckable(True)
-            sb_layout.addWidget(btn)
+        sb_layout.setSpacing(12)
+        sb_layout.setContentsMargins(16, 24, 16, 24)
+
+        title_lbl = QLabel("📌 My Reminder")
+        title_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #00bcd4;")
+        sb_layout.addWidget(title_lbl)
+        sb_layout.addSpacing(20)
+
+        self.btn_dash = self._nav_button("📊 Dashboard", 0)
+        self.btn_hist = self._nav_button("📅 History", 1)
+        self.btn_add = self._nav_button("➕ Add Task", 2)
+        self.btn_sett = self._nav_button("⚙ Settings", 3)
+
+        sb_layout.addWidget(self.btn_dash)
+        sb_layout.addWidget(self.btn_hist)
+        sb_layout.addWidget(self.btn_add)
+        sb_layout.addWidget(self.btn_sett)
         sb_layout.addStretch()
 
+        # Stack
         self.stack = QStackedWidget()
         self.stack.addWidget(self._dashboard_page())
         self.stack.addWidget(self._history_page())
@@ -606,11 +698,13 @@ class MyReminderApp(QMainWindow):
         main_layout.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
-        self.btn_dash.setChecked(True)
+        # Connect buttons
         self.btn_dash.clicked.connect(lambda: self.switch_page(0))
         self.btn_hist.clicked.connect(lambda: self.switch_page(1))
         self.btn_add.clicked.connect(lambda: self.switch_page(2))
         self.btn_sett.clicked.connect(lambda: self.switch_page(3))
+
+        self.switch_page(0)  # initial
 
         self.checker = AlarmChecker(self.db, self)
         self.refresh_timer = QTimer()
@@ -618,18 +712,76 @@ class MyReminderApp(QMainWindow):
         self.refresh_timer.start(60000)
         self.refresh_dashboard()
 
-    def _style(self):
+    def _global_style(self):
         return """
-            QMainWindow { background-color: #1e1e1e; }
-            QWidget { color: #ddd; font-family: "Segoe UI"; }
-            QGroupBox { border: 1px solid #555; border-radius: 8px; margin-top: 10px; padding-top: 15px; color: #ffaa00; }
-            QLineEdit, QTextEdit, QSpinBox, QComboBox, QTimeEdit {
-                background: #2b2b2b; border: 1px solid #555; border-radius: 6px; padding: 6px; color: white;
+            QMainWindow { background: #1a1a1a; }
+            QWidget#mainWindow { background: #1a1a1a; }
+            QWidget#sidebar {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                            stop:0 #1e1e1e, stop:1 #2a2a2a);
+                border-right: 1px solid #2a2a2a;
             }
-            QListWidget { background: #2b2b2b; border: 1px solid #555; border-radius: 6px; }
-            QPushButton { background-color: #0d7377; color: white; border-radius: 6px; padding: 8px 14px; }
-            QPushButton:hover { background-color: #0a9aa3; }
+            QPushButton#navBtn {
+                text-align: left;
+                padding: 12px 16px;
+                border: none;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 500;
+                color: #aaa;
+                background: transparent;
+            }
+            QPushButton#navBtn:hover { background: #2a2a2a; color: #eee; }
+            QPushButton#navBtn:checked {
+                background: #00bcd4;
+                color: #1a1a1a;
+                font-weight: bold;
+            }
+            QScrollArea { border: none; background: transparent; }
+            QLabel { color: #ddd; }
+            QListWidget {
+                background: #1a1a1a;
+                border: none;
+                outline: none;
+                padding: 8px;
+            }
+            QListWidget::item { border: none; padding: 4px; }
+            QListWidget::item:selected { background: #2a2a2a; }
+            QGroupBox {
+                border: 1px solid #333;
+                border-radius: 12px;
+                margin-top: 12px;
+                padding-top: 16px;
+                background: #1e1e1e;
+            }
+            QGroupBox::title { color: #00bcd4; }
+            QLineEdit, QTextEdit, QSpinBox, QComboBox, QTimeEdit {
+                background: #252525;
+                border: 1px solid #3a3a3a;
+                border-radius: 8px;
+                padding: 8px;
+                color: #eee;
+            }
+            QPushButton {
+                background: #00bcd4;
+                color: #1a1a1a;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 18px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #00acc1; }
+            QPushButton:pressed { background: #00838f; }
+            QPushButton#danger { background: #c62828; color: white; }
+            QPushButton#danger:hover { background: #b71c1c; }
         """
+
+    def _nav_button(self, text, idx):
+        btn = QPushButton(text)
+        btn.setObjectName("navBtn")
+        btn.setCheckable(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        return btn
 
     def switch_page(self, idx):
         self.stack.setCurrentIndex(idx)
@@ -643,12 +795,21 @@ class MyReminderApp(QMainWindow):
 
     def _dashboard_page(self):
         page = QWidget()
+        page.setStyleSheet("background: #1a1a1a;")
         layout = QVBoxLayout(page)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        header = QLabel("📋 Upcoming Reminders")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #eee;")
+        layout.addWidget(header)
+
         self.dash_list = QListWidget()
-        self.dash_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.dash_list.customContextMenuRequested.connect(self._dash_context_menu)
-        self.dash_list.itemDoubleClicked.connect(self._edit_selected)
-        layout.addWidget(QLabel("📋 Upcoming Reminders"))
+        self.dash_list.setStyleSheet("""
+            QListWidget { background: transparent; border: none; }
+            QListWidget::item { border: none; padding: 4px; }
+        """)
+        self.dash_list.setSpacing(8)
         layout.addWidget(self.dash_list)
         return page
 
@@ -657,98 +818,119 @@ class MyReminderApp(QMainWindow):
         tasks = self.db.get_all_tasks()
         now = datetime.datetime.now()
         current_ym = now.strftime("%Y-%m")
+
         for t in tasks:
             tid, title, desc, due_day, paid_month, snooze, start_before, alarm_time, interval, current_due = t
-            w = QWidget()
-            h = QHBoxLayout(w)
-            title_lbl = QLabel(f"{title} (Due: {due_day}, Alarm: {alarm_time})")
-            title_lbl.setWordWrap(True)
-            status = QLabel()
-            
-            # Determine status based on current_due_month
-            if current_due == "9999-12":
-                status.setText("✅ Done")
-                status.setStyleSheet("color: #88ff88;")
-            elif current_due and current_due > current_ym:
-                # Future month → not paid yet, just scheduled
-                status.setText("📅 Upcoming")
-                status.setStyleSheet("color: #4fc3f7;")  # light blue
+
+            # Card widget
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background: #252525;
+                    border-radius: 12px;
+                    padding: 16px;
+                    border: 1px solid #333;
+                }
+                QFrame:hover { border-color: #00bcd4; }
+            """)
+            card_layout = QHBoxLayout(card)
+            card_layout.setSpacing(16)
+
+            # Left: title + info
+            info_layout = QVBoxLayout()
+            title_lbl = QLabel(title)
+            title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #eee;")
+            info_layout.addWidget(title_lbl)
+
+            details = f"Due day: {due_day}  •  Alarm: {alarm_time}"
+            if interval == 0:
+                details += "  •  Once"
             else:
-                # current_due <= current_ym
+                details += f"  •  Every {interval} month{'s' if interval>1 else ''}"
+            detail_lbl = QLabel(details)
+            detail_lbl.setStyleSheet("color: #aaa; font-size: 13px;")
+            info_layout.addWidget(detail_lbl)
+
+            # Status badge
+            status_text = ""
+            status_color = ""
+            if current_due == "9999-12":
+                status_text = "✅ Done"
+                status_color = "#4caf50"
+            elif current_due and current_due > current_ym:
+                status_text = "📅 Upcoming"
+                status_color = "#4fc3f7"
+            else:
                 if current_due and current_due < current_ym:
-                    status.setText("⚠ Overdue")
-                    status.setStyleSheet("color: #ff4444;")
-                    title_lbl.setStyleSheet("color: #ff4444; font-weight: bold;")
+                    status_text = "⚠ Overdue"
+                    status_color = "#ff5252"
                 else:
-                    status.setText("🔔 Due")
-                    status.setStyleSheet("color: #ffaa00;")
-            
-            # Snooze overrides status
+                    status_text = "🔔 Due"
+                    status_color = "#ffb300"
+
             if snooze:
                 try:
                     dt = datetime.datetime.strptime(snooze, "%Y-%m-%d %H:%M:%S")
                     if now < dt:
-                        status.setText(f"Snoozed {dt.strftime('%H:%M')}")
-                        status.setStyleSheet("color: #ffcc00;")
+                        status_text = f"⏰ Snoozed {dt.strftime('%H:%M')}"
+                        status_color = "#ffca28"
                 except:
                     pass
-                    
-            h.addWidget(title_lbl, 1)
-            h.addWidget(status)
+
+            status_lbl = QLabel(status_text)
+            status_lbl.setStyleSheet(f"color: {status_color}; font-weight: bold; font-size: 14px;")
+            info_layout.addWidget(status_lbl)
+
+            # Actions
+            action_layout = QHBoxLayout()
+            btn_paid = QPushButton("✔ Paid")
+            btn_paid.setStyleSheet("background: #2e7d32; color: white; padding: 6px 12px;")
+            btn_paid.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_paid.clicked.connect(lambda checked, t=tid: self._mark_paid(t))
+
+            btn_edit = QPushButton("✏️ Edit")
+            btn_edit.setStyleSheet("background: #00695c; color: white; padding: 6px 12px;")
+            btn_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_edit.clicked.connect(lambda checked, t=tid: self._edit_task(t))
+
+            btn_delete = QPushButton("🗑 Delete")
+            btn_delete.setObjectName("danger")
+            btn_delete.setStyleSheet("background: #c62828; color: white; padding: 6px 12px;")
+            btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_delete.clicked.connect(lambda checked, t=tid: self._delete_task(t))
+
+            action_layout.addWidget(btn_paid)
+            action_layout.addWidget(btn_edit)
+            action_layout.addWidget(btn_delete)
+            action_layout.addStretch()
+
+            info_layout.addLayout(action_layout)
+
+            card_layout.addLayout(info_layout, 1)
+            card_layout.addWidget(status_lbl, alignment=Qt.AlignmentFlag.AlignTop)
+
             item = QListWidgetItem()
-            item.setSizeHint(w.sizeHint())
-            item.setData(Qt.ItemDataRole.UserRole, tid)
+            item.setSizeHint(card.sizeHint())
             self.dash_list.addItem(item)
-            self.dash_list.setItemWidget(item, w)
-
-    def _dash_context_menu(self, pos):
-        item = self.dash_list.itemAt(pos)
-        if not item:
-            return
-        tid = item.data(Qt.ItemDataRole.UserRole)
-        menu = QMenu()
-        paid_action = menu.addAction("✔ Paid")
-        menu.addSeparator()
-        edit_action = menu.addAction("Edit")
-        delete_action = menu.addAction("Delete")
-        action = menu.exec(self.dash_list.viewport().mapToGlobal(pos))
-        if action == paid_action:
-            self._mark_paid(tid)
-        elif action == edit_action:
-            self._edit_task(tid)
-        elif action == delete_action:
-            self._delete_task(tid)
-
-    def _edit_selected(self, item):
-        tid = item.data(Qt.ItemDataRole.UserRole)
-        self._edit_task(tid)
-
-    def _mark_paid(self, tid):
-        self.db.mark_paid(tid, None)
-        self.refresh_dashboard()
-
-    def _edit_task(self, tid):
-        tasks = self.db.get_all_tasks()
-        task = next((t for t in tasks if t[0] == tid), None)
-        if not task:
-            return
-        dlg = EditTaskDialog(task, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            data = dlg.get_data()
-            self.db.update_task(data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7])
-            self.refresh_dashboard()
-
-    def _delete_task(self, tid):
-        r = QMessageBox.question(self, "Delete", "Delete this task?")
-        if r == QMessageBox.StandardButton.Yes:
-            self.db.delete_task(tid)
-            self.refresh_dashboard()
+            self.dash_list.setItemWidget(item, card)
 
     def _history_page(self):
         page = QWidget()
+        page.setStyleSheet("background: #1a1a1a;")
         layout = QVBoxLayout(page)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        header = QLabel("📆 Payment History by Month")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #eee;")
+        layout.addWidget(header)
+
         self.hist_list = QListWidget()
-        layout.addWidget(QLabel("📆 Payment History by Month"))
+        self.hist_list.setStyleSheet("""
+            QListWidget { background: transparent; border: none; }
+            QListWidget::item { border: none; padding: 8px; background: #252525; border-radius: 8px; margin-bottom: 4px; }
+            QListWidget::item:hover { background: #2a2a2a; }
+        """)
         layout.addWidget(self.hist_list)
         return page
 
@@ -759,11 +941,26 @@ class MyReminderApp(QMainWindow):
 
     def _add_task_page(self):
         page = QWidget()
+        page.setStyleSheet("background: #1a1a1a;")
         layout = QVBoxLayout(page)
-        form = QFormLayout()
+        layout.setSpacing(24)
+        layout.setContentsMargins(40, 40, 40, 40)
+
+        header = QLabel("➕ New Reminder")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #eee;")
+        layout.addWidget(header)
+
+        form_widget = QWidget()
+        form_widget.setStyleSheet("background: #252525; border-radius: 16px; padding: 24px;")
+        form_layout = QFormLayout(form_widget)
+        form_layout.setSpacing(16)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
         self.inp_title = QLineEdit()
+        self.inp_title.setPlaceholderText("e.g., Rent payment")
         self.inp_desc = QTextEdit()
         self.inp_desc.setMaximumHeight(80)
+        self.inp_desc.setPlaceholderText("Optional notes")
         self.inp_due = QSpinBox()
         self.inp_due.setRange(1,31)
         self.inp_due.setValue(20)
@@ -772,10 +969,10 @@ class MyReminderApp(QMainWindow):
         self.inp_start.setValue(12)
         self.inp_time = QTimeEdit()
         self.inp_time.setTime(QTime(9,0))
-        
+
         self.inp_recur = QComboBox()
         self.inp_recur.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
-        
+
         now = datetime.datetime.now()
         self.inp_year = QSpinBox()
         self.inp_year.setRange(2024, 2035)
@@ -783,32 +980,34 @@ class MyReminderApp(QMainWindow):
         self.inp_month = QComboBox()
         self.inp_month.addItems([f"{i:02d}" for i in range(1, 13)])
         self.inp_month.setCurrentIndex(now.month - 1)
-        
-        form.addRow("Title:", self.inp_title)
-        form.addRow("Description:", self.inp_desc)
-        form.addRow("Due Day:", self.inp_due)
-        form.addRow("Start days before:", self.inp_start)
-        form.addRow("Alarm time:", self.inp_time)
-        form.addRow("Recurrence:", self.inp_recur)
-        
+
+        form_layout.addRow("Title:", self.inp_title)
+        form_layout.addRow("Description:", self.inp_desc)
+        form_layout.addRow("Due Day:", self.inp_due)
+        form_layout.addRow("Alert Start (days before):", self.inp_start)
+        form_layout.addRow("Alarm Time:", self.inp_time)
+        form_layout.addRow("Recurrence:", self.inp_recur)
+
         month_layout = QHBoxLayout()
         month_layout.addWidget(QLabel("Year:"))
         month_layout.addWidget(self.inp_year)
         month_layout.addWidget(QLabel("Month:"))
         month_layout.addWidget(self.inp_month)
-        form.addRow("Start Reminder In:", month_layout)
+        form_layout.addRow("Start Reminder In:", month_layout)
 
-        btn = QPushButton("Add Task")
-        btn.clicked.connect(self._add_task)
-        layout.addLayout(form)
-        layout.addWidget(btn)
+        btn_add = QPushButton("➕ Add Task")
+        btn_add.setStyleSheet("font-size: 16px; padding: 12px; background: #00bcd4;")
+        btn_add.clicked.connect(self._add_task)
+        form_layout.addRow(btn_add)
+
+        layout.addWidget(form_widget)
         layout.addStretch()
         return page
 
     def _add_task(self):
         title = self.inp_title.text().strip()
         if not title:
-            QMessageBox.warning(self, "Error", "Title required!")
+            QMessageBox.warning(self, "Error", "Title is required!")
             return
         interval_list = [0, 1, 2, 3, 6, 12]
         interval = interval_list[self.inp_recur.currentIndex()]
@@ -829,61 +1028,87 @@ class MyReminderApp(QMainWindow):
 
     def _settings_page(self):
         page = QWidget()
+        page.setStyleSheet("background: #1a1a1a;")
         layout = QVBoxLayout(page)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        header = QLabel("⚙ Settings")
+        header.setStyleSheet("font-size: 20px; font-weight: bold; color: #eee;")
+        layout.addWidget(header)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        w = QWidget()
-        sl = QVBoxLayout(w)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        sl = QVBoxLayout(content)
+        sl.setSpacing(16)
 
+        # Startup
         g = QGroupBox("🚀 Windows Startup")
+        g.setStyleSheet("QGroupBox { background: #252525; border-radius: 12px; padding: 16px; }")
+        h = QHBoxLayout(g)
         self.chk_startup = QCheckBox("Start with Windows")
+        self.chk_startup.setStyleSheet("color: #eee;")
         self.chk_startup.setChecked(self.db.get_setting("auto_start") == "1")
-        self.chk_startup.stateChanged.connect(lambda s: (enable_startup() if s else disable_startup(), self.db.set_setting("auto_start", "1" if s else "0")))
-        g.setLayout(QHBoxLayout())
-        g.layout().addWidget(self.chk_startup)
+        self.chk_startup.stateChanged.connect(
+            lambda s: (enable_startup() if s else disable_startup(),
+                       self.db.set_setting("auto_start", "1" if s else "0"))
+        )
+        h.addWidget(self.chk_startup)
         sl.addWidget(g)
 
+        # Sound
         g = QGroupBox("🔔 Alarm Sound")
+        g.setStyleSheet("QGroupBox { background: #252525; border-radius: 12px; padding: 16px; }")
+        h = QHBoxLayout(g)
         self.lbl_sound = QLabel(self.db.get_setting("alarm_sound_path") or "Not selected")
+        self.lbl_sound.setStyleSheet("color: #aaa;")
         btn = QPushButton("Browse...")
         btn.clicked.connect(self._choose_sound)
-        h = QHBoxLayout()
         h.addWidget(QLabel("File:"))
-        h.addWidget(self.lbl_sound)
+        h.addWidget(self.lbl_sound, 1)
         h.addWidget(btn)
-        g.setLayout(h)
         sl.addWidget(g)
 
-        g = QGroupBox("⏱ Default Snooze (min)")
+        # Snooze
+        g = QGroupBox("⏱ Default Snooze (minutes)")
+        g.setStyleSheet("QGroupBox { background: #252525; border-radius: 12px; padding: 16px; }")
+        h = QHBoxLayout(g)
         self.spin_snooze = QSpinBox()
         self.spin_snooze.setRange(1,60)
         self.spin_snooze.setValue(int(self.db.get_setting("default_snooze_minutes")))
-        h = QHBoxLayout()
         h.addWidget(QLabel("Minutes:"))
         h.addWidget(self.spin_snooze)
-        g.setLayout(h)
         sl.addWidget(g)
 
+        # Notifications
         g = QGroupBox("📬 Desktop Notifications")
-        self.chk_notif = QCheckBox("Enable toast")
+        g.setStyleSheet("QGroupBox { background: #252525; border-radius: 12px; padding: 16px; }")
+        h = QHBoxLayout(g)
+        self.chk_notif = QCheckBox("Enable toast notifications")
+        self.chk_notif.setStyleSheet("color: #eee;")
         self.chk_notif.setChecked(self.db.get_setting("desktop_notifications") == "1")
-        g.setLayout(QHBoxLayout())
-        g.layout().addWidget(self.chk_notif)
+        h.addWidget(self.chk_notif)
         sl.addWidget(g)
 
+        # Save
         btn_save = QPushButton("💾 Save Settings")
+        btn_save.setStyleSheet("padding: 12px; font-size: 14px;")
         btn_save.clicked.connect(self._save_settings)
         sl.addWidget(btn_save)
 
-        g = QGroupBox("🗄 Backup / Restore")
-        h = QHBoxLayout()
-        h.addWidget(QPushButton("Backup", clicked=self._backup))
-        h.addWidget(QPushButton("Restore", clicked=self._restore))
-        g.setLayout(h)
+        # Backup / Restore
+        g = QGroupBox("🗄 Backup & Restore")
+        g.setStyleSheet("QGroupBox { background: #252525; border-radius: 12px; padding: 16px; }")
+        h = QHBoxLayout(g)
+        h.addWidget(QPushButton("📤 Backup", clicked=self._backup))
+        h.addWidget(QPushButton("📥 Restore", clicked=self._restore))
         sl.addWidget(g)
 
         sl.addStretch()
-        scroll.setWidget(w)
+        scroll.setWidget(content)
         layout.addWidget(scroll)
         return page
 
@@ -911,6 +1136,27 @@ class MyReminderApp(QMainWindow):
             if r == QMessageBox.StandardButton.Yes:
                 self.db.restore_database(f)
                 QMessageBox.information(self, "Done", "Restored. Restart app.")
+
+    def _mark_paid(self, tid):
+        self.db.mark_paid(tid, None)
+        self.refresh_dashboard()
+
+    def _edit_task(self, tid):
+        tasks = self.db.get_all_tasks()
+        task = next((t for t in tasks if t[0] == tid), None)
+        if not task:
+            return
+        dlg = EditTaskDialog(task, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            data = dlg.get_data()
+            self.db.update_task(data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7])
+            self.refresh_dashboard()
+
+    def _delete_task(self, tid):
+        r = QMessageBox.question(self, "Delete", "Delete this task?")
+        if r == QMessageBox.StandardButton.Yes:
+            self.db.delete_task(tid)
+            self.refresh_dashboard()
 
     def show_alarm(self, tasks):
         if self.alarm_popup:
