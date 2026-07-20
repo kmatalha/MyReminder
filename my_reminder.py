@@ -135,7 +135,6 @@ class DatabaseManager:
         self.conn.commit()
 
     def _migrate_existing_data(self):
-        # Migrate paid_month to current_due_month if not set
         self.cursor.execute("SELECT id, paid_month FROM tasks WHERE current_due_month IS NULL")
         rows = self.cursor.fetchall()
         now = datetime.datetime.now()
@@ -184,7 +183,6 @@ class DatabaseManager:
         self.conn.commit()
 
     def add_task(self, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
-        # due_month is a string like "YYYY-MM"
         self.cursor.execute(
             """INSERT INTO tasks 
                (title, description, due_day, start_days_before, alarm_time, recurrence_interval, current_due_month)
@@ -216,7 +214,6 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def mark_paid(self, task_id, year_month):
-        # year_month is the month being paid (should equal current_due_month)
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cursor.execute("SELECT recurrence_interval, current_due_month FROM tasks WHERE id=?", (task_id,))
         row = self.cursor.fetchone()
@@ -224,17 +221,14 @@ class DatabaseManager:
             return
         interval, due_month_str = row
         
-        # Store payment in history
         self.cursor.execute(
             "INSERT INTO paid_history (task_id, year_month, paid_timestamp) VALUES (?,?,?)",
             (task_id, due_month_str, now_str)
         )
 
         if interval == 0:
-            # ONCE: set to a far-future date so it never triggers again
             new_due = "9999-12"
         else:
-            # Recurring: advance by interval
             try:
                 y, m = map(int, due_month_str.split("-"))
                 for _ in range(interval):
@@ -451,13 +445,10 @@ class AlarmChecker(QObject):
         triggered = []
         for t in tasks:
             tid, _, _, due_day, _, snooze, start_before, alarm_time, interval, current_due = t
-            # Skip if no due month or archived (9999-12)
             if not current_due or current_due == "9999-12":
                 continue
-            # Check if task is due this month or overdue
             if current_ym < current_due:
                 continue
-            # Check snooze
             expired_snooze = False
             if snooze:
                 try:
@@ -475,7 +466,6 @@ class AlarmChecker(QObject):
                     ah, am = 9, 0
                 if now.hour != ah or now.minute != am:
                     continue
-            # Check day window
             start_day = max(1, due_day - start_before)
             if today < start_day or today > due_day:
                 continue
@@ -509,17 +499,15 @@ class EditTaskDialog(QDialog):
         self.time_edit = QTimeEdit()
         self.time_edit.setTime(QTime.fromString(task_data[7], "HH:mm"))
         
-        # Recurrence: map interval to index
         interval = task_data[8] if len(task_data) > 8 else 1
-        interval_options = [0, 1, 2, 3, 6, 12]  # 0 = Once
+        interval_options = [0, 1, 2, 3, 6, 12]
         self.recur_combo = QComboBox()
         self.recur_combo.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
         if interval in interval_options:
             self.recur_combo.setCurrentIndex(interval_options.index(interval))
         else:
-            self.recur_combo.setCurrentIndex(1)  # fallback to 1 month
+            self.recur_combo.setCurrentIndex(1)
 
-        # Month / Year picker for starting due month
         current_due = task_data[9] if len(task_data) > 9 else datetime.datetime.now().strftime("%Y-%m")
         try:
             y, m = map(int, current_due.split("-"))
@@ -582,7 +570,6 @@ class MyReminderApp(QMainWindow):
         self.alarm_active = set()
         self.alarm_popup = None
 
-        # Tray
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(create_app_icon())
         tray_menu = QMenu()
@@ -678,14 +665,16 @@ class MyReminderApp(QMainWindow):
             title_lbl.setWordWrap(True)
             status = QLabel()
             
-            # Check if archived (permanently done)
+            # Determine status based on current_due_month
             if current_due == "9999-12":
                 status.setText("✅ Done")
                 status.setStyleSheet("color: #88ff88;")
             elif current_due and current_due > current_ym:
-                status.setText("✔ Paid")
-                status.setStyleSheet("color: #88ff88;")
+                # Future month → not paid yet, just scheduled
+                status.setText("📅 Upcoming")
+                status.setStyleSheet("color: #4fc3f7;")  # light blue
             else:
+                # current_due <= current_ym
                 if current_due and current_due < current_ym:
                     status.setText("⚠ Overdue")
                     status.setStyleSheet("color: #ff4444;")
@@ -693,7 +682,8 @@ class MyReminderApp(QMainWindow):
                 else:
                     status.setText("🔔 Due")
                     status.setStyleSheet("color: #ffaa00;")
-            # Check snooze
+            
+            # Snooze overrides status
             if snooze:
                 try:
                     dt = datetime.datetime.strptime(snooze, "%Y-%m-%d %H:%M:%S")
@@ -702,6 +692,7 @@ class MyReminderApp(QMainWindow):
                         status.setStyleSheet("color: #ffcc00;")
                 except:
                     pass
+                    
             h.addWidget(title_lbl, 1)
             h.addWidget(status)
             item = QListWidgetItem()
@@ -744,7 +735,6 @@ class MyReminderApp(QMainWindow):
         dlg = EditTaskDialog(task, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             data = dlg.get_data()
-            # data: (id, title, desc, due_day, start_before, alarm_time, interval, due_month)
             self.db.update_task(data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7])
             self.refresh_dashboard()
 
@@ -783,11 +773,9 @@ class MyReminderApp(QMainWindow):
         self.inp_time = QTimeEdit()
         self.inp_time.setTime(QTime(9,0))
         
-        # Recurrence dropdown
         self.inp_recur = QComboBox()
         self.inp_recur.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
         
-        # Month / Year picker
         now = datetime.datetime.now()
         self.inp_year = QSpinBox()
         self.inp_year.setRange(2024, 2035)
