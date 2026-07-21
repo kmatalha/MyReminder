@@ -1,16 +1,18 @@
 # My Reminder
 
-A persistent, system-tray reminder app for tracking monthly bills and recurring tasks.
+A minimal, persistent reminder app for recurring bills and one‑time tasks.
 
-## Features
-- Recurring tasks (1, 2, 3, 6, or 12 months)
-- Smart alarms with snooze (5 min, end of day, dismiss)
-- Payment history
-- System tray support
+![Screenshot](screenshot.png)   *(optional – you can add a screenshot later)*
+
+## ✨ Features
+- Recurring tasks (1, 2, 3, 6, 12 months or once)
+- Toggle **Paid / Unpaid** – undo payments easily
+- Alarm with snooze (5 min, end‑of‑day, dismiss)
+- System tray support – runs in background
 - Windows startup option
-- Backup & restore
+- Backup & restore your database
 
-## Run Locally
+## 🛠️ Run Locally
 ```bash
 pip install PyQt6
-python my_reminder.py
+python main.py

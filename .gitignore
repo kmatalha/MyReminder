@@ -1,11 +1,21 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# Database (local data)
 my_reminder.db
+
+# PyInstaller builds
 dist/
 build/
 *.spec
+
+# Virtual environments
 venv/
 env/
 myenv/
+
+# IDE
 .vscode/
 .idea/
