@@ -25,7 +25,9 @@ def create_app_icon():
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor("#00e5ff"))
+    # Gradient icon: purple to pink
+    grad = QColor(168, 85, 247)  # purple
+    painter.setBrush(grad)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawEllipse(4, 4, 56, 56)
     painter.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
