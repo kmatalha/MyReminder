@@ -11,13 +11,13 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
     QSpinBox, QLineEdit, QTextEdit, QMessageBox, QDialog, QSystemTrayIcon,
     QMenu, QFileDialog, QCheckBox, QTimeEdit, QGroupBox, QScrollArea, QComboBox,
-    QFrame, QGridLayout, QSizePolicy
+    QFrame
 )
-from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPalette
+from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 import winsound
 
-# ===================== SINGLE INSTANCE CHECK =====================
+# ===================== SINGLE INSTANCE =====================
 SHARED_MEM_KEY = "MyReminderAppSingleInstance"
 
 def is_already_running():
@@ -28,14 +28,14 @@ def is_already_running():
         return True
     return False
 
-# ===================== APP DIRECTORY HELPER =====================
+# ===================== APP DIRECTORY =====================
 def get_app_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     else:
         return os.path.dirname(os.path.abspath(__file__))
 
-# ===================== ICON GENERATOR =====================
+# ===================== ICON =====================
 def create_app_icon():
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -50,7 +50,7 @@ def create_app_icon():
     painter.end()
     return QIcon(pixmap)
 
-# ===================== AUTO-START MANAGER =====================
+# ===================== AUTO-START =====================
 def enable_startup():
     try:
         exe_path = sys.executable
@@ -93,6 +93,7 @@ class DatabaseManager:
         self._create_tables()
         self._migrate_add_columns()
         self._migrate_existing_data()
+        self._normalize_alarm_times()   # FIX: ensure all alarm times are HH:MM
         self._insert_settings_defaults()
 
     def _create_tables(self):
@@ -157,6 +158,22 @@ class DatabaseManager:
             self.cursor.execute("UPDATE tasks SET current_due_month=? WHERE id=?", (next_due, tid))
         self.conn.commit()
 
+    def _normalize_alarm_times(self):
+        """Ensure all alarm_time values are in strict HH:MM format."""
+        self.cursor.execute("SELECT id, alarm_time FROM tasks")
+        rows = self.cursor.fetchall()
+        for tid, at in rows:
+            try:
+                # Attempt to parse as HH:MM
+                dt = datetime.datetime.strptime(at, "%H:%M")
+                normalized = dt.strftime("%H:%M")
+                if normalized != at:
+                    self.cursor.execute("UPDATE tasks SET alarm_time=? WHERE id=?", (normalized, tid))
+            except (ValueError, TypeError):
+                # Invalid format -> set default 09:00
+                self.cursor.execute("UPDATE tasks SET alarm_time='09:00' WHERE id=?", (tid,))
+        self.conn.commit()
+
     def _insert_settings_defaults(self):
         defaults = {
             "alarm_sound_path": "",
@@ -184,6 +201,12 @@ class DatabaseManager:
         self.conn.commit()
 
     def add_task(self, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
+        # Ensure alarm_time is HH:MM
+        try:
+            dt = datetime.datetime.strptime(alarm_time, "%H:%M")
+            alarm_time = dt.strftime("%H:%M")
+        except:
+            alarm_time = "09:00"
         self.cursor.execute(
             """INSERT INTO tasks 
                (title, description, due_day, start_days_before, alarm_time, recurrence_interval, current_due_month)
@@ -194,6 +217,11 @@ class DatabaseManager:
         return self.cursor.lastrowid
 
     def update_task(self, task_id, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
+        try:
+            dt = datetime.datetime.strptime(alarm_time, "%H:%M")
+            alarm_time = dt.strftime("%H:%M")
+        except:
+            alarm_time = "09:00"
         self.cursor.execute("""
             UPDATE tasks 
             SET title=?, description=?, due_day=?, start_days_before=?, alarm_time=?, recurrence_interval=?, current_due_month=?
@@ -289,7 +317,7 @@ class DatabaseManager:
         self.conn = sqlite3.connect(target, check_same_thread=False)
         self.cursor = self.conn.cursor()
 
-# ===================== BEEP SOUND GENERATOR =====================
+# ===================== BEEP SOUND =====================
 def generate_beep_wav():
     sample_rate = 44100
     freq = 440
@@ -326,7 +354,7 @@ def stop_alarm_sound():
     except:
         pass
 
-# ===================== ALARM POPUP (UPGRADED UI) =====================
+# ===================== ALARM POPUP =====================
 class AlarmPopup(QDialog):
     def __init__(self, tasks, parent=None):
         super().__init__(parent)
@@ -395,7 +423,6 @@ class AlarmPopup(QDialog):
         for task in tasks:
             tid, title, *_ = task
             frame = QGroupBox(f"📌 {title}")
-            frame.setObjectName("taskFrame")
             inner = QVBoxLayout(frame)
             status_lbl = QLabel("🔔 Due now")
             status_lbl.setStyleSheet("color: #ffb300; font-weight: bold;")
@@ -507,6 +534,7 @@ class AlarmChecker(QObject):
                 continue
             if current_ym < current_due:
                 continue
+
             expired_snooze = False
             if snooze:
                 try:
@@ -517,22 +545,33 @@ class AlarmChecker(QObject):
                         expired_snooze = True
                 except:
                     pass
+
             if not expired_snooze:
+                # Parse alarm time - ensure HH:MM
                 try:
                     ah, am = map(int, alarm_time.split(":"))
+                    if not (0 <= ah < 24 and 0 <= am < 60):
+                        raise ValueError
                 except:
-                    ah, am = 9, 0
+                    ah, am = 9, 0   # fallback
                 if now.hour != ah or now.minute != am:
                     continue
+
+            # Day window
             start_day = max(1, due_day - start_before)
             if today < start_day or today > due_day:
                 continue
+
             if tid in self.main_window.alarm_active:
                 continue
+
+            # Clear snooze if it was expired
             if snooze:
                 self.db.clear_snooze(tid)
+
             self.main_window.alarm_active.add(tid)
             triggered.append(t)
+
         if triggered:
             self.main_window.show_alarm(triggered)
 
@@ -632,7 +671,7 @@ class EditTaskDialog(QDialog):
             due_month
         )
 
-# ===================== MAIN WINDOW (UPGRADED UI) =====================
+# ===================== MAIN WINDOW =====================
 class MyReminderApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -687,7 +726,6 @@ class MyReminderApp(QMainWindow):
         sb_layout.addWidget(self.btn_sett)
         sb_layout.addStretch()
 
-        # Stack
         self.stack = QStackedWidget()
         self.stack.addWidget(self._dashboard_page())
         self.stack.addWidget(self._history_page())
@@ -698,13 +736,12 @@ class MyReminderApp(QMainWindow):
         main_layout.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
-        # Connect buttons
         self.btn_dash.clicked.connect(lambda: self.switch_page(0))
         self.btn_hist.clicked.connect(lambda: self.switch_page(1))
         self.btn_add.clicked.connect(lambda: self.switch_page(2))
         self.btn_sett.clicked.connect(lambda: self.switch_page(3))
 
-        self.switch_page(0)  # initial
+        self.switch_page(0)
 
         self.checker = AlarmChecker(self.db, self)
         self.refresh_timer = QTimer()
@@ -822,7 +859,6 @@ class MyReminderApp(QMainWindow):
         for t in tasks:
             tid, title, desc, due_day, paid_month, snooze, start_before, alarm_time, interval, current_due = t
 
-            # Card widget
             card = QFrame()
             card.setStyleSheet("""
                 QFrame {
@@ -836,22 +872,25 @@ class MyReminderApp(QMainWindow):
             card_layout = QHBoxLayout(card)
             card_layout.setSpacing(16)
 
-            # Left: title + info
             info_layout = QVBoxLayout()
             title_lbl = QLabel(title)
             title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #eee;")
             info_layout.addWidget(title_lbl)
 
-            details = f"Due day: {due_day}  •  Alarm: {alarm_time}"
+            # Details line
+            details = f"📅 Due day: {due_day}  •  ⏰ Alarm: {alarm_time}"
             if interval == 0:
-                details += "  •  Once"
+                details += "  •  🔁 Once"
             else:
-                details += f"  •  Every {interval} month{'s' if interval>1 else ''}"
+                details += f"  •  🔁 Every {interval} month{'s' if interval>1 else ''}"
+            # Show active window
+            start_day = max(1, due_day - start_before)
+            details += f"  •  📆 Window: {start_day}–{due_day}"
             detail_lbl = QLabel(details)
             detail_lbl.setStyleSheet("color: #aaa; font-size: 13px;")
             info_layout.addWidget(detail_lbl)
 
-            # Status badge
+            # Status
             status_text = ""
             status_color = ""
             if current_due == "9999-12":
@@ -1065,11 +1104,14 @@ class MyReminderApp(QMainWindow):
         h = QHBoxLayout(g)
         self.lbl_sound = QLabel(self.db.get_setting("alarm_sound_path") or "Not selected")
         self.lbl_sound.setStyleSheet("color: #aaa;")
-        btn = QPushButton("Browse...")
-        btn.clicked.connect(self._choose_sound)
+        btn_browse = QPushButton("Browse...")
+        btn_browse.clicked.connect(self._choose_sound)
+        btn_test = QPushButton("🔊 Test")
+        btn_test.clicked.connect(self._test_sound)
         h.addWidget(QLabel("File:"))
         h.addWidget(self.lbl_sound, 1)
-        h.addWidget(btn)
+        h.addWidget(btn_browse)
+        h.addWidget(btn_test)
         sl.addWidget(g)
 
         # Snooze
@@ -1117,6 +1159,11 @@ class MyReminderApp(QMainWindow):
         if f:
             self.lbl_sound.setText(f)
             self.db.set_setting("alarm_sound_path", f)
+
+    def _test_sound(self):
+        path = self.db.get_setting("alarm_sound_path")
+        play_alarm_sound(path)
+        QTimer.singleShot(2000, stop_alarm_sound)
 
     def _save_settings(self):
         self.db.set_setting("default_snooze_minutes", str(self.spin_snooze.value()))
