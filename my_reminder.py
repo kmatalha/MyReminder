@@ -36,12 +36,10 @@ def get_app_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 def create_app_icon():
-    """Load custom .ico if available, otherwise generate fallback icon."""
     icon_path = os.path.join(get_app_dir(), "app.ico")
     if os.path.exists(icon_path):
         return QIcon(icon_path)
-    
-    # Fallback: generated icon with "MR" text
+    # fallback generated icon
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -656,12 +654,30 @@ class EditTaskDialog(QDialog):
         layout.addRow("Alert Start (days before):", self.start_spin)
         layout.addRow("Alarm Time:", self.time_edit)
         layout.addRow("Recurrence:", self.recur_combo)
-        month_layout = QHBoxLayout()
-        month_layout.addWidget(QLabel("Year:"))
-        month_layout.addWidget(self.year_spin)
-        month_layout.addWidget(QLabel("Month:"))
-        month_layout.addWidget(self.month_combo)
-        layout.addRow("Start Reminder In:", month_layout)
+
+        # Stylish date box
+        date_box = QFrame()
+        date_box.setStyleSheet("""
+            QFrame {
+                background: rgba(168, 85, 247, 0.08);
+                border: 1px solid rgba(168, 85, 247, 0.2);
+                border-radius: 12px;
+                padding: 8px 12px;
+            }
+        """)
+        date_layout = QHBoxLayout(date_box)
+        date_layout.setContentsMargins(8, 4, 8, 4)
+        date_layout.setSpacing(10)
+        date_icon = QLabel("📅")
+        date_icon.setStyleSheet("font-size: 18px;")
+        date_layout.addWidget(date_icon)
+        date_layout.addWidget(QLabel("Year:"))
+        date_layout.addWidget(self.year_spin)
+        date_layout.addWidget(QLabel("Month:"))
+        date_layout.addWidget(self.month_combo)
+        date_layout.addStretch()
+
+        layout.addRow("Start Reminder In:", date_box)
 
         btn_box = QHBoxLayout()
         btn_save = QPushButton("💾 Save")
@@ -993,28 +1009,23 @@ class MyReminderApp(QMainWindow):
         page = QWidget()
         page.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(page)
-        layout.setSpacing(16)
-        layout.setContentsMargins(30,30,30,30)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20,20,20,20)
         header = QLabel("➕ New Reminder")
-        header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff;")
+        header.setStyleSheet("font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 8px;")
         layout.addWidget(header)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        form_container = QWidget()
-        form_layout = QVBoxLayout(form_container)
-
         form_widget = QWidget()
-        form_widget.setStyleSheet("background: rgba(255,255,255,0.04); border-radius: 20px; padding: 24px;")
+        form_widget.setStyleSheet("background: rgba(255,255,255,0.04); border-radius: 16px; padding: 16px 20px;")
         form = QFormLayout(form_widget)
-        form.setSpacing(12)
+        form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.inp_title = QLineEdit()
         self.inp_title.setPlaceholderText("e.g., Rent")
         self.inp_desc = QTextEdit()
-        self.inp_desc.setMaximumHeight(70)
+        self.inp_desc.setMaximumHeight(60)
         self.inp_desc.setPlaceholderText("Optional notes")
         self.inp_due = QSpinBox()
         self.inp_due.setRange(1,31)
@@ -1025,7 +1036,8 @@ class MyReminderApp(QMainWindow):
         self.inp_time = QTimeEdit()
         self.inp_time.setTime(QTime(9,0))
         self.inp_recur = QComboBox()
-        self.inp_recur.addItems(["Once (no repeat)", "1 month", "2 months", "3 months", "6 months", "12 months"])
+        self.inp_recur.addItems(["Once", "1 month", "2 months", "3 months", "6 months", "12 months"])
+
         now = datetime.datetime.now()
         self.inp_year = QSpinBox()
         self.inp_year.setRange(2024, 2035)
@@ -1039,26 +1051,41 @@ class MyReminderApp(QMainWindow):
         form.addRow("Title:", self.inp_title)
         form.addRow("Description:", self.inp_desc)
         form.addRow("Due Day:", self.inp_due)
-        form.addRow("Alert Start (days before):", self.inp_start)
+        form.addRow("Alert (days before):", self.inp_start)
         form.addRow("Alarm Time:", self.inp_time)
         form.addRow("Recurrence:", self.inp_recur)
-        month_layout = QHBoxLayout()
-        month_layout.addWidget(QLabel("Year:"))
-        month_layout.addWidget(self.inp_year)
-        month_layout.addWidget(QLabel("Month:"))
-        month_layout.addWidget(self.inp_month)
-        form.addRow("Start Reminder In:", month_layout)
+
+        # Stylish date box
+        date_box = QFrame()
+        date_box.setStyleSheet("""
+            QFrame {
+                background: rgba(168, 85, 247, 0.08);
+                border: 1px solid rgba(168, 85, 247, 0.2);
+                border-radius: 12px;
+                padding: 8px 12px;
+            }
+        """)
+        date_layout = QHBoxLayout(date_box)
+        date_layout.setContentsMargins(8, 4, 8, 4)
+        date_layout.setSpacing(10)
+        date_icon = QLabel("📅")
+        date_icon.setStyleSheet("font-size: 18px;")
+        date_layout.addWidget(date_icon)
+        date_layout.addWidget(QLabel("Year:"))
+        date_layout.addWidget(self.inp_year)
+        date_layout.addWidget(QLabel("Month:"))
+        date_layout.addWidget(self.inp_month)
+        date_layout.addStretch()
+
+        form.addRow("Start Date:", date_box)
 
         btn_add = QPushButton("➕ Add Task")
-        btn_add.setStyleSheet("font-size: 15px; padding: 10px;")
+        btn_add.setStyleSheet("font-size: 14px; padding: 8px;")
         btn_add.clicked.connect(self._add_task)
         form.addRow(btn_add)
 
-        form_layout.addWidget(form_widget)
-        form_layout.addStretch()
-        scroll.setWidget(form_container)
-
-        layout.addWidget(scroll)
+        layout.addWidget(form_widget)
+        layout.addStretch()
         return page
 
     def _add_task(self):
@@ -1088,11 +1115,11 @@ class MyReminderApp(QMainWindow):
         page = QWidget()
         page.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(20,20,20,20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
 
         header = QLabel("⚙ Settings")
-        header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff;")
+        header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff; margin-bottom: 8px;")
         layout.addWidget(header)
 
         scroll = QScrollArea()
@@ -1101,91 +1128,245 @@ class MyReminderApp(QMainWindow):
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content)
-        content_layout.setSpacing(12)
-        content_layout.setContentsMargins(0,0,0,0)
+        content_layout.setSpacing(16)
+        content_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Startup
-        g = QGroupBox("🚀 Startup")
-        h = QHBoxLayout(g)
+        # Helper to create a card
+        def create_card(title, icon):
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background: rgba(255,255,255,0.04);
+                    border-radius: 16px;
+                    border: 1px solid rgba(255,255,255,0.06);
+                    padding: 16px 20px;
+                }
+                QFrame:hover {
+                    background: rgba(255,255,255,0.06);
+                    border-color: rgba(168,85,247,0.3);
+                }
+            """)
+            card_layout = QVBoxLayout(card)
+            card_layout.setSpacing(10)
+            # Title row with icon
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0,0,0,0)
+            icon_lbl = QLabel(icon)
+            icon_lbl.setStyleSheet("font-size: 18px;")
+            title_lbl = QLabel(title)
+            title_lbl.setStyleSheet("font-size: 15px; font-weight: 600; color: #eee;")
+            title_row.addWidget(icon_lbl)
+            title_row.addWidget(title_lbl)
+            title_row.addStretch()
+            card_layout.addLayout(title_row)
+            # Content area (will be filled later)
+            content_area = QWidget()
+            content_area.setStyleSheet("background: transparent;")
+            content_layout_inner = QVBoxLayout(content_area)
+            content_layout_inner.setContentsMargins(0,0,0,0)
+            content_layout_inner.setSpacing(8)
+            card_layout.addWidget(content_area)
+            return card, content_layout_inner
+
+        # 1. Startup
+        card, inner = create_card("Startup", "🚀")
         self.chk_startup = QCheckBox("Start with Windows")
-        self.chk_startup.setStyleSheet("color: #eee;")
+        self.chk_startup.setStyleSheet("""
+            QCheckBox {
+                color: #ddd;
+                font-size: 14px;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid #555;
+                background: rgba(255,255,255,0.05);
+            }
+            QCheckBox::indicator:checked {
+                background: #a855f7;
+                border-color: #a855f7;
+            }
+        """)
         self.chk_startup.setChecked(self.db.get_setting("auto_start") == "1")
         self.chk_startup.stateChanged.connect(lambda s: (enable_startup() if s else disable_startup(), self.db.set_setting("auto_start", "1" if s else "0")))
-        h.addWidget(self.chk_startup)
-        content_layout.addWidget(g)
+        inner.addWidget(self.chk_startup)
+        content_layout.addWidget(card)
 
-        # Sound
-        g = QGroupBox("🔔 Alarm Sound")
-        h = QHBoxLayout(g)
+        # 2. Alarm Sound
+        card, inner = create_card("Alarm Sound", "🔔")
+        sound_row = QHBoxLayout()
+        sound_row.setSpacing(10)
         self.lbl_sound = QLabel(self.db.get_setting("alarm_sound_path") or "Not selected")
-        self.lbl_sound.setStyleSheet("color: #aaa;")
+        self.lbl_sound.setStyleSheet("color: #aaa; font-size: 13px;")
         btn_browse = QPushButton("Browse...")
+        btn_browse.setStyleSheet("padding: 4px 12px; font-size: 12px; background: rgba(255,255,255,0.06); color: #ccc; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px;")
         btn_browse.clicked.connect(self._choose_sound)
         btn_test = QPushButton("🔊 Test")
+        btn_test.setStyleSheet("padding: 4px 12px; font-size: 12px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.2); border-radius: 20px;")
         btn_test.clicked.connect(self._test_sound)
-        h.addWidget(QLabel("File:"))
-        h.addWidget(self.lbl_sound, 1)
-        h.addWidget(btn_browse)
-        h.addWidget(btn_test)
-        content_layout.addWidget(g)
+        sound_row.addWidget(QLabel("File:"))
+        sound_row.addWidget(self.lbl_sound, 1)
+        sound_row.addWidget(btn_browse)
+        sound_row.addWidget(btn_test)
+        inner.addLayout(sound_row)
+        content_layout.addWidget(card)
 
-        # Snooze
-        g = QGroupBox("⏱ Default Snooze")
-        h = QHBoxLayout(g)
+        # 3. Default Snooze
+        card, inner = create_card("Default Snooze", "⏱")
+        snooze_row = QHBoxLayout()
+        snooze_row.setSpacing(10)
+        snooze_row.addWidget(QLabel("Minutes:"))
         self.spin_snooze = QSpinBox()
         self.spin_snooze.setRange(1,60)
         self.spin_snooze.setValue(int(self.db.get_setting("default_snooze_minutes")))
-        h.addWidget(QLabel("Minutes:"))
-        h.addWidget(self.spin_snooze)
-        content_layout.addWidget(g)
+        self.spin_snooze.setStyleSheet("""
+            QSpinBox {
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 4px 8px;
+                color: #eee;
+                width: 60px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 16px;
+                border: none;
+                background: transparent;
+            }
+        """)
+        snooze_row.addWidget(self.spin_snooze)
+        snooze_row.addStretch()
+        inner.addLayout(snooze_row)
+        content_layout.addWidget(card)
 
-        # Notifications
-        g = QGroupBox("📬 Notifications")
-        h = QHBoxLayout(g)
-        self.chk_notif = QCheckBox("Enable toast")
-        self.chk_notif.setStyleSheet("color: #eee;")
+        # 4. Notifications
+        card, inner = create_card("Notifications", "📬")
+        self.chk_notif = QCheckBox("Enable toast notifications")
+        self.chk_notif.setStyleSheet("""
+            QCheckBox {
+                color: #ddd;
+                font-size: 14px;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 2px solid #555;
+                background: rgba(255,255,255,0.05);
+            }
+            QCheckBox::indicator:checked {
+                background: #a855f7;
+                border-color: #a855f7;
+            }
+        """)
         self.chk_notif.setChecked(self.db.get_setting("desktop_notifications") == "1")
-        h.addWidget(self.chk_notif)
-        content_layout.addWidget(g)
+        inner.addWidget(self.chk_notif)
+        content_layout.addWidget(card)
 
+        # 5. Save Settings button (as a card)
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: rgba(255,255,255,0.04);
+                border-radius: 16px;
+                border: 1px solid rgba(255,255,255,0.06);
+                padding: 12px;
+            }
+        """)
+        card_layout = QHBoxLayout(card)
         btn_save = QPushButton("💾 Save Settings")
-        btn_save.setStyleSheet("padding: 10px; font-size: 14px;")
+        btn_save.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #a855f7, stop:1 #ec4899);
+                color: white;
+                border: none;
+                border-radius: 40px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 14px;
+            }
+            QPushButton:hover { opacity: 0.9; }
+        """)
         btn_save.clicked.connect(self._save_settings)
-        content_layout.addWidget(btn_save)
+        card_layout.addWidget(btn_save)
+        card_layout.addStretch()
+        content_layout.addWidget(card)
 
-        # Clear Done Tasks
-        g = QGroupBox("🧹 Maintenance")
-        vbox = QVBoxLayout(g)
+        # 6. Maintenance (Clear Done)
+        card, inner = create_card("Maintenance", "🧹")
         btn_clear_done = QPushButton("🗑 Clear Done Tasks")
-        btn_clear_done.setStyleSheet("background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.2); border-radius: 40px; padding: 8px;")
+        btn_clear_done.setStyleSheet("""
+            QPushButton {
+                background: rgba(248,113,113,0.12);
+                color: #f87171;
+                border: 1px solid rgba(248,113,113,0.2);
+                border-radius: 40px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            QPushButton:hover { background: rgba(248,113,113,0.2); }
+        """)
         btn_clear_done.clicked.connect(self._clear_done_tasks)
-        vbox.addWidget(btn_clear_done)
-        content_layout.addWidget(g)
+        inner.addWidget(btn_clear_done)
+        content_layout.addWidget(card)
 
-        # Reset Settings
-        g = QGroupBox("🔄 Reset")
-        vbox = QVBoxLayout(g)
+        # 7. Reset Settings
+        card, inner = create_card("Reset", "🔄")
         btn_reset = QPushButton("↩ Reset All Settings to Default")
-        btn_reset.setStyleSheet("background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.2); border-radius: 40px; padding: 8px;")
+        btn_reset.setStyleSheet("""
+            QPushButton {
+                background: rgba(251,191,36,0.12);
+                color: #fbbf24;
+                border: 1px solid rgba(251,191,36,0.2);
+                border-radius: 40px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            QPushButton:hover { background: rgba(251,191,36,0.2); }
+        """)
         btn_reset.clicked.connect(self._reset_settings)
-        vbox.addWidget(btn_reset)
-        content_layout.addWidget(g)
+        inner.addWidget(btn_reset)
+        content_layout.addWidget(card)
 
-        # Export CSV
-        g = QGroupBox("📤 Export")
-        vbox = QVBoxLayout(g)
+        # 8. Export CSV
+        card, inner = create_card("Export", "📤")
         btn_export = QPushButton("📊 Export History as CSV")
-        btn_export.setStyleSheet("background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.2); border-radius: 40px; padding: 8px;")
+        btn_export.setStyleSheet("""
+            QPushButton {
+                background: rgba(52,211,153,0.12);
+                color: #34d399;
+                border: 1px solid rgba(52,211,153,0.2);
+                border-radius: 40px;
+                padding: 8px 16px;
+                font-weight: 500;
+                font-size: 13px;
+            }
+            QPushButton:hover { background: rgba(52,211,153,0.2); }
+        """)
         btn_export.clicked.connect(self._export_csv)
-        vbox.addWidget(btn_export)
-        content_layout.addWidget(g)
+        inner.addWidget(btn_export)
+        content_layout.addWidget(card)
 
-        # Backup / Restore
-        g = QGroupBox("🗄 Backup & Restore")
-        h = QHBoxLayout(g)
-        h.addWidget(QPushButton("📤 Backup", clicked=self._backup))
-        h.addWidget(QPushButton("📥 Restore", clicked=self._restore))
-        content_layout.addWidget(g)
+        # 9. Backup & Restore
+        card, inner = create_card("Backup & Restore", "🗄")
+        backup_restore_row = QHBoxLayout()
+        backup_restore_row.setSpacing(10)
+        btn_backup = QPushButton("📤 Backup")
+        btn_backup.setStyleSheet("padding: 8px 16px; font-size: 13px; background: rgba(255,255,255,0.06); color: #ccc; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px;")
+        btn_backup.clicked.connect(self._backup)
+        btn_restore = QPushButton("📥 Restore")
+        btn_restore.setStyleSheet("padding: 8px 16px; font-size: 13px; background: rgba(255,255,255,0.06); color: #ccc; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px;")
+        btn_restore.clicked.connect(self._restore)
+        backup_restore_row.addWidget(btn_backup)
+        backup_restore_row.addWidget(btn_restore)
+        backup_restore_row.addStretch()
+        inner.addLayout(backup_restore_row)
+        content_layout.addWidget(card)
 
         content_layout.addStretch()
         scroll.setWidget(content)
