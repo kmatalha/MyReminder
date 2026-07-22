@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
     QSpinBox, QLineEdit, QTextEdit, QMessageBox, QDialog, QSystemTrayIcon,
     QMenu, QFileDialog, QCheckBox, QTimeEdit, QGroupBox, QScrollArea, QComboBox,
-    QFrame
+    QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
@@ -193,17 +193,37 @@ class DatabaseManager:
         self.conn.commit()
 
     def _normalize_alarm_times(self):
+        """Ensure all alarm_time values are in strict HH:MM format with leading zeros."""
         self.cursor.execute("SELECT id, alarm_time FROM tasks")
         rows = self.cursor.fetchall()
         for tid, at in rows:
-            try:
-                dt = datetime.datetime.strptime(at, "%H:%M")
-                normalized = dt.strftime("%H:%M")
-                if normalized != at:
-                    self.cursor.execute("UPDATE tasks SET alarm_time=? WHERE id=?", (normalized, tid))
-            except (ValueError, TypeError):
-                self.cursor.execute("UPDATE tasks SET alarm_time='09:00' WHERE id=?", (tid,))
+            normalized = self._normalize_time(at)
+            if normalized != at:
+                self.cursor.execute("UPDATE tasks SET alarm_time=? WHERE id=?", (normalized, tid))
         self.conn.commit()
+
+    def _normalize_time(self, time_str):
+        """Try to parse and reformat to HH:MM; if fails, return '09:00'."""
+        if not time_str:
+            return "09:00"
+        # Try common formats
+        for fmt in ("%H:%M", "%I:%M %p", "%H:%M:%S", "%I:%M:%S %p"):
+            try:
+                dt = datetime.datetime.strptime(time_str, fmt)
+                return dt.strftime("%H:%M")
+            except ValueError:
+                continue
+        # If it's like "11:4" or "9:0"
+        try:
+            parts = time_str.split(":")
+            if len(parts) == 2:
+                h = int(parts[0])
+                m = int(parts[1])
+                if 0 <= h < 24 and 0 <= m < 60:
+                    return f"{h:02d}:{m:02d}"
+        except:
+            pass
+        return "09:00"
 
     def _insert_settings_defaults(self):
         defaults = {
@@ -232,11 +252,7 @@ class DatabaseManager:
         self.conn.commit()
 
     def add_task(self, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
-        try:
-            dt = datetime.datetime.strptime(alarm_time, "%H:%M")
-            alarm_time = dt.strftime("%H:%M")
-        except:
-            alarm_time = "09:00"
+        alarm_time = self._normalize_time(alarm_time)
         self.cursor.execute(
             """INSERT INTO tasks 
                (title, description, due_day, start_days_before, alarm_time, recurrence_interval, current_due_month)
@@ -247,11 +263,7 @@ class DatabaseManager:
         return self.cursor.lastrowid
 
     def update_task(self, task_id, title, description, due_day, start_days_before, alarm_time, recurrence_interval, due_month):
-        try:
-            dt = datetime.datetime.strptime(alarm_time, "%H:%M")
-            alarm_time = dt.strftime("%H:%M")
-        except:
-            alarm_time = "09:00"
+        alarm_time = self._normalize_time(alarm_time)
         self.cursor.execute("""
             UPDATE tasks 
             SET title=?, description=?, due_day=?, start_days_before=?, alarm_time=?, recurrence_interval=?, current_due_month=?
@@ -517,23 +529,38 @@ class AlarmChecker(QObject):
                 except:
                     pass
             if not expired_snooze:
+                # Parse alarm_time strictly; fallback to 09:00
                 try:
-                    ah, am = map(int, alarm_time.split(":"))
+                    # Ensure HH:MM format
+                    if len(alarm_time) == 5 and alarm_time[2] == ':':
+                        ah, am = int(alarm_time[:2]), int(alarm_time[3:])
+                    else:
+                        # Try to parse with more flexibility
+                        parts = alarm_time.split(":")
+                        if len(parts) == 2:
+                            ah, am = int(parts[0]), int(parts[1])
+                        else:
+                            raise ValueError
                     if not (0 <= ah < 24 and 0 <= am < 60):
                         raise ValueError
                 except:
                     ah, am = 9, 0
                 if now.hour != ah or now.minute != am:
                     continue
+
             start_day = max(1, due_day - start_before)
             if today < start_day or today > due_day:
                 continue
+
             if tid in self.main_window.alarm_active:
                 continue
+
             if snooze:
                 self.db.clear_snooze(tid)
+
             self.main_window.alarm_active.add(tid)
             triggered.append(t)
+
         if triggered:
             self.main_window.show_alarm(triggered)
 
@@ -569,7 +596,11 @@ class EditTaskDialog(QDialog):
         self.start_spin.setRange(1,30)
         self.start_spin.setValue(task_data[6])
         self.time_edit = QTimeEdit()
-        self.time_edit.setTime(QTime.fromString(task_data[7], "HH:mm"))
+        # Ensure we parse HH:MM correctly
+        try:
+            self.time_edit.setTime(QTime.fromString(task_data[7], "HH:mm"))
+        except:
+            self.time_edit.setTime(QTime(9,0))
 
         interval = task_data[8] if len(task_data) > 8 else 1
         interval_options = [0,1,2,3,6,12]
@@ -588,8 +619,11 @@ class EditTaskDialog(QDialog):
         self.year_spin = QSpinBox()
         self.year_spin.setRange(2024, 2035)
         self.year_spin.setValue(y)
+        # Month dropdown with names
         self.month_combo = QComboBox()
-        self.month_combo.addItems([f"{i:02d}" for i in range(1,13)])
+        month_names = ["January", "February", "March", "April", "May", "June",
+                       "July", "August", "September", "October", "November", "December"]
+        self.month_combo.addItems(month_names)
         self.month_combo.setCurrentIndex(m-1)
 
         layout.addRow("Title:", self.title_edit)
@@ -618,7 +652,8 @@ class EditTaskDialog(QDialog):
     def get_data(self):
         interval_list = [0,1,2,3,6,12]
         interval = interval_list[self.recur_combo.currentIndex()]
-        due_month = f"{self.year_spin.value():04d}-{int(self.month_combo.currentText()):02d}"
+        month_index = self.month_combo.currentIndex() + 1
+        due_month = f"{self.year_spin.value():04d}-{month_index:02d}"
         return (
             self.task_id,
             self.title_edit.text().strip(),
@@ -930,11 +965,19 @@ class MyReminderApp(QMainWindow):
         header = QLabel("➕ New Reminder")
         header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff;")
         layout.addWidget(header)
+
+        # Scroll area for the form
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        form_container = QWidget()
+        form_layout = QVBoxLayout(form_container)
+
         form_widget = QWidget()
         form_widget.setStyleSheet("background: rgba(255,255,255,0.04); border-radius: 20px; padding: 24px;")
-        form_layout = QFormLayout(form_widget)
-        form_layout.setSpacing(12)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form = QFormLayout(form_widget)
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.inp_title = QLineEdit()
         self.inp_title.setPlaceholderText("e.g., Rent")
@@ -955,30 +998,36 @@ class MyReminderApp(QMainWindow):
         self.inp_year = QSpinBox()
         self.inp_year.setRange(2024, 2035)
         self.inp_year.setValue(now.year)
+        # Month dropdown with names
+        month_names = ["January", "February", "March", "April", "May", "June",
+                       "July", "August", "September", "October", "November", "December"]
         self.inp_month = QComboBox()
-        self.inp_month.addItems([f"{i:02d}" for i in range(1,13)])
+        self.inp_month.addItems(month_names)
         self.inp_month.setCurrentIndex(now.month-1)
 
-        form_layout.addRow("Title:", self.inp_title)
-        form_layout.addRow("Description:", self.inp_desc)
-        form_layout.addRow("Due Day:", self.inp_due)
-        form_layout.addRow("Alert Start (days before):", self.inp_start)
-        form_layout.addRow("Alarm Time:", self.inp_time)
-        form_layout.addRow("Recurrence:", self.inp_recur)
+        form.addRow("Title:", self.inp_title)
+        form.addRow("Description:", self.inp_desc)
+        form.addRow("Due Day:", self.inp_due)
+        form.addRow("Alert Start (days before):", self.inp_start)
+        form.addRow("Alarm Time:", self.inp_time)
+        form.addRow("Recurrence:", self.inp_recur)
         month_layout = QHBoxLayout()
         month_layout.addWidget(QLabel("Year:"))
         month_layout.addWidget(self.inp_year)
         month_layout.addWidget(QLabel("Month:"))
         month_layout.addWidget(self.inp_month)
-        form_layout.addRow("Start Reminder In:", month_layout)
+        form.addRow("Start Reminder In:", month_layout)
 
         btn_add = QPushButton("➕ Add Task")
         btn_add.setStyleSheet("font-size: 15px; padding: 10px;")
         btn_add.clicked.connect(self._add_task)
-        form_layout.addRow(btn_add)
+        form.addRow(btn_add)
 
-        layout.addWidget(form_widget)
-        layout.addStretch()
+        form_layout.addWidget(form_widget)
+        form_layout.addStretch()
+        scroll.setWidget(form_container)
+
+        layout.addWidget(scroll)
         return page
 
     def _add_task(self):
@@ -988,7 +1037,8 @@ class MyReminderApp(QMainWindow):
             return
         interval_list = [0,1,2,3,6,12]
         interval = interval_list[self.inp_recur.currentIndex()]
-        due_month = f"{self.inp_year.value():04d}-{int(self.inp_month.currentText()):02d}"
+        month_index = self.inp_month.currentIndex() + 1
+        due_month = f"{self.inp_year.value():04d}-{month_index:02d}"
         self.db.add_task(
             title,
             self.inp_desc.toPlainText().strip(),
@@ -1012,6 +1062,7 @@ class MyReminderApp(QMainWindow):
         header = QLabel("⚙ Settings")
         header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff;")
         layout.addWidget(header)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
