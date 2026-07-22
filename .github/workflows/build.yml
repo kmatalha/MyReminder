@@ -24,7 +24,7 @@ jobs:
 
     - name: Build EXE
       run: |
-        pyinstaller --onefile --windowed --name MyReminder main.py
+        pyinstaller --onefile --windowed --name MyReminder my_reminder.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
