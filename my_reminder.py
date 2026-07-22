@@ -12,13 +12,13 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QPushButton, QListWidget, QListWidgetItem, QFormLayout,
     QSpinBox, QLineEdit, QTextEdit, QMessageBox, QDialog, QSystemTrayIcon,
     QMenu, QFileDialog, QCheckBox, QTimeEdit, QGroupBox, QScrollArea, QComboBox,
-    QFrame, QSizePolicy, QToolTip
+    QFrame
 )
-from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory, QPoint
+from PyQt6.QtCore import Qt, QTimer, QTime, QObject, QSharedMemory
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 import winsound
 
-# ===================== UTILITIES =====================
+# ===================== SINGLE INSTANCE =====================
 SHARED_MEM_KEY = "MyReminderAppSingleInstance"
 
 def is_already_running():
@@ -36,6 +36,12 @@ def get_app_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 def create_app_icon():
+    """Load custom .ico if available, otherwise generate fallback icon."""
+    icon_path = os.path.join(get_app_dir(), "app.ico")
+    if os.path.exists(icon_path):
+        return QIcon(icon_path)
+    
+    # Fallback: generated icon with "MR" text
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -289,7 +295,6 @@ class DatabaseManager:
 
     def clear_done_tasks(self):
         self.cursor.execute("DELETE FROM tasks WHERE current_due_month='9999-12'")
-        # Also remove orphaned history entries (optional)
         self.conn.commit()
 
     def get_all_tasks(self):
@@ -853,7 +858,6 @@ class MyReminderApp(QMainWindow):
             card_layout.setContentsMargins(6, 4, 6, 4)
             card_layout.setSpacing(10)
 
-            # Left info (title + meta)
             info = QVBoxLayout()
             info.setSpacing(0)
             title_lbl = QLabel(title)
@@ -863,7 +867,6 @@ class MyReminderApp(QMainWindow):
             meta.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px;")
             info.addWidget(meta)
 
-            # Status dot + text (compact)
             status_frame = QFrame()
             status_frame.setStyleSheet("background: rgba(255,255,255,0.03); border-radius: 30px; padding: 2px 8px;")
             status_layout = QHBoxLayout(status_frame)
@@ -904,7 +907,6 @@ class MyReminderApp(QMainWindow):
 
             card_layout.addLayout(info, 1)
 
-            # Actions (icon only, with tooltip)
             actions = QHBoxLayout()
             actions.setSpacing(2)
 
@@ -1093,7 +1095,6 @@ class MyReminderApp(QMainWindow):
         header.setStyleSheet("font-size: 22px; font-weight: 600; color: #fff;")
         layout.addWidget(header)
 
-        # Main scroll area for settings content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -1147,16 +1148,13 @@ class MyReminderApp(QMainWindow):
         h.addWidget(self.chk_notif)
         content_layout.addWidget(g)
 
-        # Save Settings
         btn_save = QPushButton("💾 Save Settings")
         btn_save.setStyleSheet("padding: 10px; font-size: 14px;")
         btn_save.clicked.connect(self._save_settings)
         content_layout.addWidget(btn_save)
 
-        # --- NEW FEATURES ---
         # Clear Done Tasks
         g = QGroupBox("🧹 Maintenance")
-        g.setStyleSheet("QGroupBox { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; margin-top: 10px; padding-top: 14px; }")
         vbox = QVBoxLayout(g)
         btn_clear_done = QPushButton("🗑 Clear Done Tasks")
         btn_clear_done.setStyleSheet("background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid rgba(248,113,113,0.2); border-radius: 40px; padding: 8px;")
@@ -1182,7 +1180,7 @@ class MyReminderApp(QMainWindow):
         vbox.addWidget(btn_export)
         content_layout.addWidget(g)
 
-        # Backup / Restore (existing)
+        # Backup / Restore
         g = QGroupBox("🗄 Backup & Restore")
         h = QHBoxLayout(g)
         h.addWidget(QPushButton("📤 Backup", clicked=self._backup))
@@ -1194,7 +1192,6 @@ class MyReminderApp(QMainWindow):
         layout.addWidget(scroll)
         return page
 
-    # ----- Settings callbacks -----
     def _clear_done_tasks(self):
         r = QMessageBox.question(self, "Clear Done", "Delete all tasks marked as 'Done'? This cannot be undone.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if r == QMessageBox.StandardButton.Yes:
@@ -1206,7 +1203,6 @@ class MyReminderApp(QMainWindow):
         r = QMessageBox.question(self, "Reset Settings", "Reset all settings to default? This will remove your custom sound path, snooze minutes, and startup preference.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if r == QMessageBox.StandardButton.Yes:
             self.db.reset_settings()
-            # Refresh UI elements in settings
             self.chk_startup.setChecked(False)
             self.spin_snooze.setValue(10)
             self.chk_notif.setChecked(True)
