@@ -36,10 +36,11 @@ def get_app_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 def create_app_icon():
+    """Load custom .ico if available, otherwise generate fallback icon."""
     icon_path = os.path.join(get_app_dir(), "app.ico")
     if os.path.exists(icon_path):
         return QIcon(icon_path)
-    # fallback generated icon
+    # Fallback: generated icon with "MR" text
     pixmap = QPixmap(64, 64)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
